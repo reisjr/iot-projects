@@ -1,0 +1,276 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Metadata: 
+  License: Apache-2.0
+Description: 'A stack implementing a device lifecycle management for AWS IoT using Amazon SQS, Lambda, SNS, and DynamoDB as proposed in https://pt.slideshare.net/AmazonWebServices/srv408-deep-dive-on-aws-iot/55 .'
+
+Parameters:
+  ReadCapacityUnits:
+      Description: Provisioned read throughput
+      Type: Number
+      Default: '2'
+      MinValue: '1'
+      MaxValue: '10000'
+      ConstraintDescription: must be between 5 and 10000
+  WriteCapacityUnits:
+      Description: Provisioned write throughput
+      Type: Number
+      Default: '2'
+      MinValue: '1'
+      MaxValue: '10000'
+      ConstraintDescription: must be between 5 and 10000
+  DisconnectEventDelayAlarmTrigger:
+      Description: Amount of time in seconds that a disconnection event should trigger an alarm.
+      Type: Number
+      Default: '900'
+      MinValue: '0'
+      MaxValue: '900'
+      ConstraintDescription: Maximum of 15 minutes / 900 seconds
+  NotificationEmail:
+      Description: The email to be notified when an event occurs.
+      Type: String
+      Default: 'iotuser@domain.com'
+      ConstraintDescription: "A valid email address"
+      AllowedPattern: "^[\\x20-\\x45]?[\\w-\\+]+(\\.[\\w]+)*@[\\w-]+(\\.[\\w]+)*(\\.[a-z]{2,})$"
+
+Resources:
+
+  DeviceLifecycleQueue:
+    Type: "AWS::SQS::Queue"
+    Properties:
+      DelaySeconds: 900 # 15 minutes 
+      QueueName: "iot-device-lifecycle"
+      ReceiveMessageWaitTimeSeconds: 0
+      VisibilityTimeout: 30 # 30 seconds
+
+  NotificationSnsTopic:
+    Type: "AWS::SNS::Topic"
+    Properties:
+      Subscription:
+      - Endpoint: !Ref "NotificationEmail"
+        Protocol: email
+
+  DeviceLifecycleStatusTable:
+    Type: "AWS::DynamoDB::Table"
+    Properties:
+      AttributeDefinitions:
+        - 
+          AttributeName: "device"
+          AttributeType: "S"
+      KeySchema:
+        - 
+          AttributeName: "device"
+          KeyType: "HASH"
+      ProvisionedThroughput:
+        ReadCapacityUnits: !Ref "ReadCapacityUnits"
+        WriteCapacityUnits: !Ref "WriteCapacityUnits"
+      TableName: !Sub "iot-device-lifecycle-status-table-${AWS::StackName}"
+  
+  DeviceLifecycleEventsTable:
+    Type: "AWS::DynamoDB::Table"
+    Properties:
+      AttributeDefinitions:
+        - 
+          AttributeName: "device"
+          AttributeType: "S"
+        - 
+          AttributeName: "time"
+          AttributeType: "S"
+      KeySchema:
+        - 
+          AttributeName: "device"
+          KeyType: "HASH"
+        -
+          AttributeName: "time"
+          KeyType: "RANGE"
+      ProvisionedThroughput:
+        ReadCapacityUnits: !Ref "ReadCapacityUnits"
+        WriteCapacityUnits: !Ref "WriteCapacityUnits"
+      TableName: !Sub "iot-device-lifecycle-events-table-${AWS::StackName}"
+
+  LambdaParseIoTEvents:
+    Type: "AWS::Lambda::Function"
+    Properties: 
+      Code: 
+        S3Bucket: "dreis-iot"
+        S3Key: "lifecycle/parse_iot_events.zip"
+      Description: "A sample function to parse devices lifecycle events"
+      Environment:
+        Variables: 
+          SQS_QUEUE_DELAY_SECS: !Ref "DisconnectEventDelayAlarmTrigger"
+          SQS_QUEUE_NAME: 
+             Fn::GetAtt: 
+              - DeviceLifecycleQueue
+              - QueueName
+          DDB_TABLE_DEVICE_STATUS: !Sub "iot-device-lifecycle-status-table-${AWS::StackName}"
+      FunctionName: !Sub 'ParseIoTEvents-${AWS::StackName}'
+      Handler: parse_iot_events.lambda_handler
+      MemorySize: 128
+      Role: 
+        Fn::GetAtt: 
+          - "LifecycleControlLambdaRole"
+          - "Arn"
+      Runtime: "python3.6"
+      Timeout: 5
+
+  LambdaCheckIoTDevices:
+    Type: "AWS::Lambda::Function"
+    Properties: 
+      Code: 
+        S3Bucket: "dreis-iot"
+        S3Key: "lifecycle/check_iot_devices.zip"
+      Description: "Checks if devices are disconnected for more than the expected time."
+      Environment:
+        Variables: 
+          SQS_QUEUE_NAME: 
+             Fn::GetAtt: 
+              - DeviceLifecycleQueue
+              - QueueName
+          DDB_TABLE_DEVICE_STATUS: !Sub "iot-device-lifecycle-status-table-${AWS::StackName}"
+          DDB_TABLE_DEVICE_EVENTS: !Sub "iot-device-lifecycle-events-table-${AWS::StackName}"
+          SNS_TOPIC_ARN : !Ref "NotificationSnsTopic"
+      FunctionName: !Sub 'CheckIoTDevices-${AWS::StackName}'
+      Handler: check_iot_devices.lambda_handler
+      MemorySize: 128
+      Role: 
+        Fn::GetAtt: 
+          - "LifecycleControlLambdaRole"
+          - "Arn"
+      Runtime: "python3.6"
+      Timeout: 60
+
+  ScheduledRule: 
+    Type: "AWS::Events::Rule"
+    Properties: 
+      Description: "ScheduledRuleForCallingLambda"
+      ScheduleExpression: "rate(1 minute)"
+      State: "ENABLED"
+      Targets: 
+        - 
+          Arn: 
+            Fn::GetAtt: 
+              - "LambdaCheckIoTDevices"
+              - "Arn"
+          Id: "LambdaCheckIoTDevicesEvent"
+
+  # Create AWS IoT Rule
+  DeviceLifecycleRule:
+    Type: "AWS::IoT::TopicRule"
+    Properties: 
+      RuleName: "DeviceLifecycleRule"
+      TopicRulePayload: 
+        RuleDisabled: "false"
+        Sql: >-
+          Select clientId as deviceId, timestamp as time, eventType as status, clientInitiatedDisconnect as isNormalDisconnect FROM '$aws/events/presence/#'
+        Actions: 
+          - 
+            Lambda: 
+              FunctionArn: 
+                Fn::GetAtt: 
+                    - "LambdaParseIoTEvents"
+                    - "Arn"
+ 
+  RuleLambdaInvocationRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      AssumeRolePolicyDocument: 
+            Version: "2012-10-17"
+            Statement: 
+              - 
+                Effect: "Allow"
+                Principal: 
+                  Service: 
+                    - "iot.amazonaws.com"
+                Action: 
+                  - "sts:AssumeRole"
+      Path: "/"
+      Policies: 
+        - 
+          PolicyName: "LambdaInvocationPolicy"
+          PolicyDocument: 
+            Version: "2012-10-17"
+            Statement: 
+              - 
+                Effect: "Allow"
+                Action: "lambda:InvokeFunction"
+                Resource: 
+                  Fn::GetAtt: 
+                    - "LambdaParseIoTEvents"
+                    - "Arn" 
+
+  LambdaParseIoTEventsPermission: 
+    Type: "AWS::Lambda::Permission"
+    Properties: 
+      FunctionName: 
+        Fn::GetAtt: 
+          - "LambdaParseIoTEvents"
+          - "Arn"
+      Action: "lambda:InvokeFunction"
+      Principal: "iot.amazonaws.com"
+      SourceAccount: 
+        Ref: "AWS::AccountId"
+
+  LifecycleControlLambdaRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      AssumeRolePolicyDocument: 
+            Version: "2012-10-17"
+            Statement: 
+              - 
+                Effect: "Allow"
+                Principal: 
+                  Service: 
+                    - "lambda.amazonaws.com"
+                Action: 
+                  - "sts:AssumeRole"
+      Path: "/"
+      Policies: 
+        - 
+          PolicyName: "LifecycleControlPolicy"
+          PolicyDocument: 
+            Version: "2012-10-17"
+            Statement: 
+              - 
+                Effect: "Allow"
+                Action: "dynamodb:*"
+                Resource:
+                  - Fn::Sub: arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${DeviceLifecycleStatusTable}
+                  - Fn::Sub: arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${DeviceLifecycleEventsTable}
+              - 
+                Effect: "Allow"
+                Action: "sqs:*"
+                Resource: 
+                  Fn::GetAtt: 
+                    - "DeviceLifecycleQueue"
+                    - "Arn"
+              - 
+                Effect: "Allow"
+                Action: "sns:*"
+                Resource: !Ref NotificationSnsTopic
+              - 
+                Effect: "Allow"
+                Action: "logs:*"
+                Resource: "arn:aws:logs:*:*:*"
+
+
+  PermissionForEventsToInvokeLambda: 
+    Type: "AWS::Lambda::Permission"
+    Properties: 
+      FunctionName: 
+        Ref: "LambdaCheckIoTDevices"
+      Action: "lambda:InvokeFunction"
+      Principal: "events.amazonaws.com"
+      SourceArn: 
+        Fn::GetAtt: 
+          - "ScheduledRule"
+          - "Arn"
+
+Outputs:
+  DeviceStatusTableName:
+    Value: !Ref "DeviceLifecycleStatusTable"
+    Description: Name of the table with device status
+  DeviceEventsTableName:
+    Value: !Ref "DeviceLifecycleEventsTable"
+    Description: Name of the table with device events
+  QueueName:
+    Value: !Ref "DeviceLifecycleQueue"
+    Description: Name of queue

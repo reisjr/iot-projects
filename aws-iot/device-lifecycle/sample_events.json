@@ -1,0 +1,20 @@
+$aws/events/presence/disconnected/#
+
+{
+  "clientId": "mosqsub/11803-f45c89aa4",
+  "timestamp": 1501617521266,
+  "eventType": "disconnected",
+  "clientInitiatedDisconnect": false,
+  "sessionIdentifier": "9756cbd4-026e-4134-aba4-5e1a0b1800fa",
+  "principalIdentifier": "7e58157549829ea744c32d4f2dc5d798f6b81c9efbed09d6944bd813a8a241bb"
+}
+
+$aws/events/presence/connected/#
+
+{
+  "clientId": "mosqsub/11803-f45c89aa4",
+  "timestamp": 1501617522875,
+  "eventType": "connected",
+  "sessionIdentifier": "9a9df2e8-d2af-4631-853e-ace737c40f38",
+  "principalIdentifier": "7e58157549829ea744c32d4f2dc5d798f6b81c9efbed09d6944bd813a8a241bb"
+}
