@@ -3,7 +3,7 @@ import os
 import json
 import datetime
 
-TIMEOUT_THRESHOLD = 6000 # Setup a maximum loop processing time to avoid finishing the function in middle due to lambda timeout
+TIMEOUT_THRESHOLD = 40000 # Setup a maximum loop processing time to avoid finishing the function in middle due to lambda timeout
 SQS_QUEUE_NAME = os.environ['SQS_QUEUE_NAME']
 SNS_TOPIC_ARN = os.environ['SNS_TOPIC_ARN']
 DDB_TABLE_DEVICE_STATUS = os.environ['DDB_TABLE_DEVICE_STATUS']
@@ -65,7 +65,7 @@ def lambda_handler(event, context):
 
     msgs_processed = 0 
 
-    while context.get_remaining_time_in_millis() > TIMEOUT_THRESHOLD: # Finish the function before lambda timeout
+    while context.get_remaining_time_in_millis() > TIMEOUT_THRESHOLD: # finish the function before lambda timeout
         
         messages = queue.receive_messages(WaitTimeSeconds=5)
         
@@ -81,9 +81,13 @@ def lambda_handler(event, context):
             if 'Item' not in record:
                 print("Device {} not found in table {}.".format(device, DDB_TABLE_DEVICE_STATUS))
             elif record['Item']['status'] == 'disconnected': # can consider also if the connection was normal or not
-                text = notify_device_owner(device, record)
-                save_event(device, text)
-            
+                last_status_ts = int(record['Item']['time'])
+                event_ts = int(payload['time'])
+                
+                if last_status_ts <= event_ts: # check if there was a more recent event
+                    text = notify_device_owner(device, record)
+                    save_event(device, text)
+                
             message.delete()
             msgs_processed += 1
     
