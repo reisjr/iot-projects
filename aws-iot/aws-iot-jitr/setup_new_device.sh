@@ -18,9 +18,9 @@ wget "https://www.symantec.com/content/en/us/enterprise/verisign/roots/VeriSign-
 
 echo "Checking AWS IoT endpoint..."
 
-ENDPOINT=`aws iot describe-endpoint --query "endpointAddress" | tr -d "\""`
+ENDPOINT=`aws iot describe-endpoint --query "endpointAddress" --output text`
 
-echo "Connecting..."
+echo "Connecting to \"$ENDPOINT\"..."
 
 mosquitto_pub \
     --cafile rootCA.pem \
