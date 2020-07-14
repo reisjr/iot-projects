@@ -106,5 +106,10 @@ ENV/
 
 # Certs
 *.crt
+*.cer
 *.key
 *.pem
+*.pfx
+*.csr
+*.srl
+*.zip
