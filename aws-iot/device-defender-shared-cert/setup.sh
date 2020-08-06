@@ -11,9 +11,14 @@ CA_KEY="$CA_PREFIX.key"
 CA_PEM="$CA_PREFIX.pem"
 
 DEV_ID="$RANDOM"
-DEV_CERT_NAME="device-cert-$DEV_ID.pem"
-DEV_CSR_NAME="device-cert-$DEV_ID.csr"
-DEV_KEY_NAME="device-cert-$DEV_ID.key"
+DEV_NAME_PREFIX="device-shared-cert"
+DEV_NAME="$DEV_NAME_PREFIX-$DEV_ID"
+DEV_NAME_A="$DEV_NAME-a"
+DEV_NAME_B="$DEV_NAME-b"
+
+DEV_CERT_NAME="$DEV_NAME.pem"
+DEV_CSR_NAME="$DEV_NAME.csr"
+DEV_KEY_NAME="$DEV_NAME.key"
 
 if [ -f "$CA_KEY" ]; then
     echo ""
@@ -29,10 +34,29 @@ else
         -subj "/C=BR/ST=SP/L=Sao Paulo/O=AWS IOT Test/CN=Sample Root CA"
 fi
 
-echo "Generating crypto material for device $DEV_ID..."
+if [ -z ${AWS_REGION+x} ]; then 
+    echo "No region specified. export AWS_REGION=us-east-2"
+    exit 1
+else 
+    echo ""
+    echo "Working on region $AWS_REGION"
+    echo ""
+fi
+
+echo "Generating crypto material for device $DEV_NAME_A / $DEV_NAME_B..."
 echo "CERT $DEV_CERT_NAME..."
 echo "CSR  $DEV_CSR_NAME..."
 echo "KEY  $DEV_KEY_NAME..."
+
+DEV_CONFIG_FILE="$DEV_NAME.cfg"
+
+echo "DEV_ID=$DEV_ID"  >> $DEV_CONFIG_FILE
+echo "DEV_NAME_PREFIX=$DEV_NAME_PREFIX" > $DEV_CONFIG_FILE
+echo "DEV_NAME=$DEV_NAME" >> $DEV_CONFIG_FILE
+echo "DEV_NAME_A=$DEV_NAME_A" >> $DEV_CONFIG_FILE
+echo "DEV_NAME_B=$DEV_NAME_B" >> $DEV_CONFIG_FILE
+echo "AWS_REGION=$AWS_REGION" >> $DEV_CONFIG_FILE
+echo "AWS_PROFILE=$AWS_PROFILE" >> $DEV_CONFIG_FILE
 
 openssl genrsa -out "$DEV_KEY_NAME" 2048
 
@@ -53,7 +77,7 @@ if [ -f "root-ca.pem" ]; then
 else
     echo ""
     echo "Downloading root cert..."
-    wget "$AWS_ROOT_CA_1" --quiet -O root-ca.pem 
+    wget "$AWS_ROOT_CA_1" --quiet -O root-ca.pem
 fi
 
 echo ""
@@ -65,37 +89,48 @@ CERT_ARN=`aws iot register-certificate-without-ca \
     --query "certificateArn" --output text`
 
 echo "CERT_ARN $CERT_ARN"
+echo "CERT_ARN=$CERT_ARN" >> $DEV_CONFIG_FILE
 
 # Attach thing
 
 aws iot create-thing \
-    --thing-name "dd-audit-shared-cert-1"
+    --thing-name "$DEV_NAME_A" \
+    --region $AWS_REGION
 
 aws iot create-thing \
-    --thing-name "dd-audit-shared-cert-2"
+    --thing-name "$DEV_NAME_B" \
+    --region $AWS_REGION
 
 aws iot attach-thing-principal \
-    --thing-name "dd-audit-shared-cert-1" \
-    --principal "$CERT_ARN"
+    --thing-name "$DEV_NAME_A" \
+    --principal "$CERT_ARN" \
+    --region $AWS_REGION
 
 aws iot attach-thing-principal \
-    --thing-name "dd-audit-shared-cert-2" \
-    --principal "$CERT_ARN"
+    --thing-name "$DEV_NAME_B" \
+    --principal "$CERT_ARN" \
+    --region $AWS_REGION
 
 # Attach policy
 
 aws iot create-policy \
-    --policy-name shared-device-policy-2 \
-    --policy-document "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Sid\":\"ConnectUsingClientId\",\"Effect\":\"Allow\",\"Action\":\"iot:*\",\"Resource\":\"*\"}]}"
+    --policy-name "$DEV_NAME-policy" \
+    --policy-document "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Sid\":\"ConnectUsingClientId\",\"Effect\":\"Allow\",\"Action\":\"iot:*\",\"Resource\":\"*\"}]}" \
+    --region $AWS_REGION
+
+echo "POLICY=$DEV_NAME-policy" >> $DEV_CONFIG_FILE
 
 aws iot attach-policy \
-    --policy-name shared-device-policy-2 \
-    --target $CERT_ARN
+    --policy-name "$DEV_NAME-policy" \
+    --target $CERT_ARN \
+    --region $AWS_REGION
 
 echo ""
 echo "Checking AWS IoT endpoint..."
 
 ENDPOINT=`aws iot describe-endpoint --endpoint-type "iot:Data-ATS" --output text --query "endpointAddress"`
+
+echo "ENDPOINT=$ENDPOINT" >> $DEV_CONFIG_FILE
 
 echo ""
 echo "Connecting to '$ENDPOINT'..."
@@ -104,8 +139,8 @@ mosquitto_pub \
     --cafile root-ca.pem \
     --cert device-cert-and-ca-cert.crt \
     --key "$DEV_KEY_NAME" -h $ENDPOINT -p 8883 \
-    --repeat 5 --repeat-delay 1 \
-    -q 1 -t foo/bar/test -i "dd-audit-shared-cert-1" \
+    --repeat 5000 --repeat-delay 5 \
+    -q 1 -t foo/bar/test -i "$DEV_NAME_A" \
     --tls-version tlsv1.2 -m "Hello" -d &
 
 
@@ -113,40 +148,8 @@ mosquitto_pub \
     --cafile root-ca.pem \
     --cert device-cert-and-ca-cert.crt \
     --key "$DEV_KEY_NAME" -h $ENDPOINT -p 8883 \
-    --repeat 5 --repeat-delay 1 \
-    -q 1 -t foo/bar/test -i "dd-audit-shared-cert-2" \
-    --tls-version tlsv1.2 -m "Hello" -d
+    --repeat 5000 --repeat-delay 5 \
+    -q 1 -t foo/bar/test -i "$DEV_NAME_B" \
+    --tls-version tlsv1.2 -m "Hello" -d &
 
-
-aws iot detach-thing-principal \
-    --thing-name "dd-audit-shared-cert-1" \
-    --principal "$CERT_ARN"
-
-aws iot detach-thing-principal \
-    --thing-name "dd-audit-shared-cert-2" \
-    --principal "$CERT_ARN"
-
-aws iot detach-policy \
-    --policy-name "shared-device-policy-1" \
-    --target "$CERT_ARN"
-
-aws iot detach-policy \
-    --policy-name "shared-device-policy-2" \
-    --target "$CERT_ARN"
-
-
-CERT_ID=`echo $CERT_ARN | cut -f2 -d/`
-
-echo ""
-echo "Deactivating certificate $CERT_ID..."
-
-aws iot update-certificate \
-    --certificate-id "$CERT_ID" \
-    --new-status "INACTIVE"
-
-echo ""
-echo "Removing certificate $CERT_ID..."
-
-aws iot delete-certificate \
-    --certificate-id "$CERT_ID"
-    
+wait
