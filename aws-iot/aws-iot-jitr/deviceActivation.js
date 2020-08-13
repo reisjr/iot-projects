@@ -10,7 +10,7 @@ var AWS = require('aws-sdk');
 exports.handler = function(event, context, callback) {
 
 //Replace it with the AWS region the lambda will be running in
-var region = "us-east-1";
+var region = process.env.AWS_REGION;
 
 var accountId = event.awsAccountId.toString().trim();
 

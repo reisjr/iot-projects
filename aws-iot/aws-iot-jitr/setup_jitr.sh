@@ -3,6 +3,8 @@
 # Based on AWS IoT Blog
 # https://aws.amazon.com/pt/blogs/iot/just-in-time-registration-of-device-certificates-on-aws-iot/
 
+# Link to openssl config - https://access.redhat.com/solutions/28965
+
 CONFIG_FILE="jitr.cfg"
 
 echo "Creating a sample CA..."

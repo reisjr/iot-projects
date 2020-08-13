@@ -60,9 +60,9 @@ FUNCTION_ARN=`aws lambda create-function \
 for i in {1..5}; do 
     echo "Function ARN $FUNCTION_ARN"
     
-    if [ -n "$FUNCTION_ARN" ]; then
-        break
-    fi
+    # if [ -n "$FUNCTION_ARN" ]; then
+    #     break
+    # fi
     
     sleep 3
 
@@ -111,8 +111,8 @@ echo "Adding permission to lambda function..."
 
 aws lambda add-permission \
     --function-name "JITR_Register_Device" \
-    --region us-east-1 \
-    --principal iot.amazonaws.com \
+    --region "$AWS_DEFAULT_REGION" \
+    --principal "iot.amazonaws.com" \
     --source-arn "$TOPIC_ARN" \
     --source-account "$ACC_NUMBER" \
     --statement-id "Id-123456" \
@@ -121,7 +121,7 @@ aws lambda add-permission \
 echo "DONE!"
 
 echo -e "\n#########\n"
-echo "       Your CA cert : sampleCACertificate.pem"
+echo "       Your CA cert : sample-ca-certificate.pem"
 echo "Your Certificate ID : $CERTIFICATE_ID"
 
 echo -e "\n#########\n"
