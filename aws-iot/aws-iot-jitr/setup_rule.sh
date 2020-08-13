@@ -3,7 +3,11 @@
 # Based on AWS IoT Blog
 # https://aws.amazon.com/pt/blogs/iot/just-in-time-registration-of-device-certificates-on-aws-iot/
 
+CONFIG_FILE="jitr.cfg"
+
 PACKAGE="deviceActivation.zip"
+
+echo "PACKAGE=$PACKAGE" >> $CONFIG_FILE
 
 SCRIPT=`basename "$0"`
 
@@ -18,12 +22,16 @@ fi
 BUCKET=$1
 CERTIFICATE_ID=$2
 
+echo "BUCKET=$BUCKET" >> $CONFIG_FILE
+
 echo "Provisioning Role required in Lambda..."
 
 ROLE_ARN=`aws iam create-role \
     --role-name JITR_Lambda_Role \
     --assume-role-policy-document '{"Version":"2012-10-17","Statement":[{"Sid":"","Effect":"Allow","Principal":{"Service":"lambda.amazonaws.com"},"Action":"sts:AssumeRole"}]}' \
     --query "Role.Arn" | tr -d "\""`
+
+echo "ROLE_ARN=$ROLE_ARN" >> $CONFIG_FILE
 
 aws iam put-role-policy \
           --role-name JITR_Lambda_Role \
@@ -42,7 +50,7 @@ echo "Lambda Role $ROLE_ARN"
 
 FUNCTION_ARN=`aws lambda create-function \
     --function-name JITR_Register_Device \
-    --runtime "nodejs4.3" \
+    --runtime "nodejs12.x" \
     --role "$ROLE_ARN" \
     --handler "deviceActivation.handler" \
     --timeout 60 \
@@ -60,13 +68,15 @@ for i in {1..5}; do
 
     FUNCTION_ARN=`aws lambda create-function \
         --function-name JITR_Register_Device \
-        --runtime "nodejs4.3" \
+        --runtime "nodejs12.x" \
         --role "$ROLE_ARN" \
         --handler "deviceActivation.handler" \
         --timeout 60 \
         --code "S3Bucket=$BUCKET,S3Key=$PACKAGE" \
         --query "FunctionArn" | tr -d "\""`
 done
+
+echo "FUNCTION_ARN=$FUNCTION_ARN" >> $CONFIG_FILE
 
 echo "Creating AWS IoT Rule..."
 
@@ -89,9 +99,13 @@ for i in {1..5}; do
     sleep 3
 done
 
+echo "TOPIC_ARN=$TOPIC_ARN" >> $CONFIG_FILE
+
 echo "Getting account number..."
 
 ACC_NUMBER=`aws sts get-caller-identity --output text --query 'Account'`
+
+echo "ACC_NUMBER=$ACC_NUMBER" >> $CONFIG_FILE
 
 echo "Adding permission to lambda function..."
 

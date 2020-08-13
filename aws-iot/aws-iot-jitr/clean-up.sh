@@ -3,7 +3,6 @@
 aws iot delete-topic-rule \
     --rule-name "JITR_Sample_Rule"
 
-
 aws lambda delete-function \
     --function-name "JITR_Register_Device"
 
