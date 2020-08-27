@@ -43,6 +43,15 @@ else
     echo ""
 fi
 
+if [ -z ${AWS_DEFAULT_PROFILE+x} ]; then 
+    echo "No default profile specified. export AWS_DEFAULT_PROFILE=profile-name"
+    exit 1
+else 
+    echo ""
+    echo "Working on profile $AWS_DEFAULT_PROFILE"
+    echo ""
+fi
+
 echo "Generating crypto material for device $DEV_NAME_A / $DEV_NAME_B..."
 echo "CERT $DEV_CERT_NAME..."
 echo "CSR  $DEV_CSR_NAME..."
@@ -50,13 +59,13 @@ echo "KEY  $DEV_KEY_NAME..."
 
 DEV_CONFIG_FILE="$DEV_NAME.cfg"
 
-echo "DEV_ID=$DEV_ID"  >> $DEV_CONFIG_FILE
-echo "DEV_NAME_PREFIX=$DEV_NAME_PREFIX" > $DEV_CONFIG_FILE
+echo "DEV_ID=$DEV_ID" > $DEV_CONFIG_FILE
+echo "DEV_NAME_PREFIX=$DEV_NAME_PREFIX" >> $DEV_CONFIG_FILE
 echo "DEV_NAME=$DEV_NAME" >> $DEV_CONFIG_FILE
 echo "DEV_NAME_A=$DEV_NAME_A" >> $DEV_CONFIG_FILE
 echo "DEV_NAME_B=$DEV_NAME_B" >> $DEV_CONFIG_FILE
 echo "AWS_REGION=$AWS_REGION" >> $DEV_CONFIG_FILE
-echo "AWS_PROFILE=$AWS_PROFILE" >> $DEV_CONFIG_FILE
+echo "AWS_PROFILE=$AWS_DEFAULT_PROFILE" >> $DEV_CONFIG_FILE
 
 openssl genrsa -out "$DEV_KEY_NAME" 2048
 
@@ -85,6 +94,7 @@ echo "Registering certificate without CA..."
 
 CERT_ARN=`aws iot register-certificate-without-ca \
     --status ACTIVE \
+    --profile $AWS_DEFAULT_PROFILE \
     --certificate-pem "file://$DEV_CERT_NAME" \
     --query "certificateArn" --output text`
 
@@ -95,20 +105,24 @@ echo "CERT_ARN=$CERT_ARN" >> $DEV_CONFIG_FILE
 
 aws iot create-thing \
     --thing-name "$DEV_NAME_A" \
+    --profile $AWS_DEFAULT_PROFILE \
     --region $AWS_REGION
 
 aws iot create-thing \
     --thing-name "$DEV_NAME_B" \
+    --profile $AWS_DEFAULT_PROFILE \
     --region $AWS_REGION
 
 aws iot attach-thing-principal \
     --thing-name "$DEV_NAME_A" \
     --principal "$CERT_ARN" \
+    --profile $AWS_DEFAULT_PROFILE \
     --region $AWS_REGION
 
 aws iot attach-thing-principal \
     --thing-name "$DEV_NAME_B" \
     --principal "$CERT_ARN" \
+    --profile $AWS_DEFAULT_PROFILE \
     --region $AWS_REGION
 
 # Attach policy
@@ -116,6 +130,7 @@ aws iot attach-thing-principal \
 aws iot create-policy \
     --policy-name "$DEV_NAME-policy" \
     --policy-document "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Sid\":\"ConnectUsingClientId\",\"Effect\":\"Allow\",\"Action\":\"iot:*\",\"Resource\":\"*\"}]}" \
+    --profile $AWS_DEFAULT_PROFILE \
     --region $AWS_REGION
 
 echo "POLICY=$DEV_NAME-policy" >> $DEV_CONFIG_FILE
@@ -123,12 +138,13 @@ echo "POLICY=$DEV_NAME-policy" >> $DEV_CONFIG_FILE
 aws iot attach-policy \
     --policy-name "$DEV_NAME-policy" \
     --target $CERT_ARN \
+    --profile $AWS_DEFAULT_PROFILE \
     --region $AWS_REGION
 
 echo ""
 echo "Checking AWS IoT endpoint..."
 
-ENDPOINT=`aws iot describe-endpoint --endpoint-type "iot:Data-ATS" --output text --query "endpointAddress"`
+ENDPOINT=`aws iot describe-endpoint --endpoint-type "iot:Data-ATS" --output text --profile $AWS_DEFAULT_PROFILE --query "endpointAddress"`
 
 echo "ENDPOINT=$ENDPOINT" >> $DEV_CONFIG_FILE
 
